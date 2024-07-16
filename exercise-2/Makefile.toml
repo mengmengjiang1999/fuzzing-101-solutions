@@ -3,7 +3,8 @@
 dependencies = ["cargo-clean", "libexif-clean", "build-dir-clean"]
 
 [tasks.build]
-dependencies = ["clean", "build-compilers", "copy-project-to-build", "build-libexif", "build-fuzzer"]
+# dependencies = ["clean", "build-compilers", "copy-project-to-build", "build-libexif", "build-fuzzer"]
+dependencies = ["build-fuzzer"]
 
 # clean up tasks
 [tasks.cargo-clean]

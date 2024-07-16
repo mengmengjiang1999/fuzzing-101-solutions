@@ -1,4 +1,4 @@
-use libafl_cc::{ClangWrapper, CompilerWrapper};
+use libafl_cc::{ClangWrapper, CompilerWrapper, ToolWrapper};
 use std::env;
 
 pub fn main() {
@@ -6,6 +6,7 @@ pub fn main() {
     let args: Vec<String> = env::args().collect();
 
     let mut cc = ClangWrapper::new();
+    // let mut cc = ToolWrapper::new();
 
     if let Some(code) = cc
         .cpp(false)
