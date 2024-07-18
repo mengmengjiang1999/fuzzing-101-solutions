@@ -1,26 +1,54 @@
-use libafl::bolts::rands::StdRand;
-use libafl::bolts::shmem::{ShMem, ShMemProvider, StdShMemProvider};
-use libafl::bolts::tuples::tuple_list;
-use libafl::bolts::{current_nanos, AsMutSlice};
-use libafl::corpus::{Corpus, InMemoryCorpus, OnDiskCorpus};
-use libafl::events::SimpleEventManager;
-use libafl::executors::{ForkserverExecutor, TimeoutForkserverExecutor};
-use libafl::feedbacks::{MaxMapFeedback, TimeFeedback, TimeoutFeedback};
-use libafl::inputs::BytesInput;
-use libafl::monitors::SimpleMonitor;
-use libafl::mutators::{havoc_mutations, StdScheduledMutator};
-use libafl::observers::{HitcountsMapObserver, StdMapObserver, TimeObserver};
-use libafl::schedulers::{IndexesLenTimeMinimizerScheduler, QueueScheduler};
-use libafl::stages::StdMutationalStage;
-use libafl::state::{HasCorpus, StdState};
-use libafl::{feedback_and_fast, feedback_or, Error, Fuzzer, StdFuzzer};
+
+use libafl_bolts::rands::StdRand;
+use libafl_bolts::shmem::ShMem;
+use libafl_bolts::shmem::ShMemProvider;
+use libafl_bolts::shmem::StdShMemProvider;
+use libafl_bolts::tuples::tuple_list;
+use libafl_bolts::tuples::Merge;
+use libafl_bolts::AsSliceMut;
+use libafl_bolts::{current_nanos};
+use env_logger;
+
+use libafl::{
+    corpus::{Corpus, InMemoryCorpus,OnDiskCorpus},
+    events::SimpleEventManager,
+    executors::{
+        forkserver::{ForkserverExecutor},
+        HasObservers,
+    },
+    feedback_and_fast,
+    feedback_or,
+    feedbacks::{
+        TimeFeedback,
+        TimeoutFeedback,
+        map::MaxMapFeedback,
+    },
+    fuzzer::{Fuzzer, StdFuzzer},
+    inputs::BytesInput,
+    monitors::SimpleMonitor,
+    // mutators::scheduled::{havoc_mutations, StdScheduledMutator},
+    mutators::{scheduled::havoc_mutations, tokens_mutations, StdScheduledMutator, Tokens},
+    observers::{
+        TimeObserver,
+        HitcountsMapObserver,
+        ConstMapObserver,
+        StdMapObserver,
+        CanTrack,
+    },
+    schedulers::{IndexesLenTimeMinimizerScheduler, QueueScheduler},
+    stages::mutational::StdMutationalStage,
+    state::{HasCorpus, StdState},
+    HasMetadata,
+};
+
 use std::path::PathBuf;
 use std::time::Duration;
 
 /// size of the shared memory mapping used as the coverage map
 const MAP_SIZE: usize = 65536;
 
-fn main() -> Result<(), Error> {
+fn main(){
+    env_logger::init();
     //
     // Component: Corpus
     //
@@ -33,7 +61,7 @@ fn main() -> Result<(), Error> {
 
     // Corpus in which we store solutions (timeouts/hangs in this example),
     // on disk so the user can get them after stopping the fuzzer
-    let timeouts_corpus = OnDiskCorpus::new(PathBuf::from("./timeouts"))?;
+    let timeouts_corpus = OnDiskCorpus::new(PathBuf::from("./timeouts")).expect("Could not create timeouts corpus");
 
     //
     // Component: Observer
@@ -41,6 +69,7 @@ fn main() -> Result<(), Error> {
 
     // Create an observation channel to keep track of the current testcase's execution time
     let time_observer = TimeObserver::new("time");
+
 
     // Create an observation channel using the coverage map.
     //
@@ -52,18 +81,31 @@ fn main() -> Result<(), Error> {
     // map
 
     // The shmem provider supported by AFL++ for shared memory
-    let mut shmem_provider = StdShMemProvider::new()?;
+    // let mut shmem_provider = StdShMemProvider::new()?;
 
-    // The coverage map shared between observer and executor
-    let mut shmem = shmem_provider.new_shmem(MAP_SIZE)?;
+    // // The coverage map shared between observer and executor
+    // let mut shmem = shmem_provider.new_shmem(MAP_SIZE)?;
 
-    // let the forkserver know the shmid
-    shmem.write_to_env("__AFL_SHM_ID")?;
-    let shmem_buf = shmem.as_mut_slice();
+    // // let the forkserver know the shmid
+    // shmem.write_to_env("__AFL_SHM_ID")?;
+    // let shmem_buf = shmem.as_mut_slice();
+
+    let mut shmem_provider=StdShMemProvider::new().unwrap();
+
+    let mut shmem = shmem_provider.new_shmem(MAP_SIZE).unwrap();
+    // shmem.write_to_env("__AFL_SHM_ID").expect("couldn't write shared memory ID");
+    shmem.write_to_env("__AFL_SHM_ID").expect("couldn't write shared memory ID");
+    let shmem_map = shmem.as_slice_mut();
 
     // Create an observation channel using the signals map
-    let edges_observer =
-        unsafe { HitcountsMapObserver::new(StdMapObserver::new("shared_mem", shmem_buf)) };
+
+    // let edges_observer = HitcountsMapObserver::new(ConstMapObserver::<_, MAP_SIZE>::new(
+    //     "shared_mem",
+    //     shmem_map,
+    // ));
+    let edges_observer = unsafe {
+        HitcountsMapObserver::new(StdMapObserver::new("shared_mem", shmem_map)).track_indices()
+    };
 
     //
     // Component: Feedback
@@ -72,6 +114,10 @@ fn main() -> Result<(), Error> {
     // A Feedback, in most cases, processes the information reported by one or more observers to
     // decide if the execution is interesting. This one is composed of two Feedbacks using a logical
     // OR.
+
+
+// Feedback to rate the interestingness of an input
+    // let feedback = MaxMapFeedback::new(&feedback_state, &edges_observer);
     //
     // Due to the fact that TimeFeedback can never classify a testcase as interesting on its own,
     // we need to use it alongside some other Feedback that has the ability to perform said
@@ -81,10 +127,10 @@ fn main() -> Result<(), Error> {
         // New maximization map feedback (attempts to maximize the map contents) linked to the
         // edges observer. This one will track indexes, but will not track novelties,
         // i.e. new_tracking(... true, false).
-        MaxMapFeedback::tracking(&edges_observer, true, false),
+        MaxMapFeedback::new(&edges_observer),
         // Time feedback, this one never returns true for is_interesting, However, it does keep
         // track of testcase execution time by way of its TimeObserver
-        TimeFeedback::with_observer(&time_observer)
+        TimeFeedback::new(&time_observer)
     );
 
     // A feedback is used to choose if an input should be added to the corpus or not. In the case
@@ -99,7 +145,10 @@ fn main() -> Result<(), Error> {
     // means only enough feedback functions will be called to know whether or not the objective
     // has been met, i.e. short-circuiting logic.
     let mut objective =
-        feedback_and_fast!(TimeoutFeedback::new(), MaxMapFeedback::new(&edges_observer));
+        feedback_and_fast!(
+            TimeoutFeedback::new(), 
+            MaxMapFeedback::with_name("mapfeedback_metadata_objective", &edges_observer)
+    );
 
     //
     // Component: Monitor
@@ -112,7 +161,9 @@ fn main() -> Result<(), Error> {
     // further explanation from domenukk: The 0th client is the client that opens a network socket
     // and listens for other clients and potentially brokers. It's still a client from llmp's
     // perspective, so it's more or less an implementation detail.
-    let monitor = SimpleMonitor::new(|s| println!("{s}"));
+    let monitor = SimpleMonitor::with_user_monitor(|s| {
+        println!("{s}");
+    });
 
     //
     // Component: EventManager
@@ -143,7 +194,9 @@ fn main() -> Result<(), Error> {
         // persisted in the State.
         &mut feedback,
         &mut objective,
-    )?;
+    ).unwrap();
+
+    println!("build state");
 
     //
     // Component: Scheduler
@@ -156,11 +209,15 @@ fn main() -> Result<(), Error> {
     // entries registered in the MapIndexesMetadata
     //
     // a QueueCorpusScheduler walks the corpus in a queue-like fashion
-    let scheduler = IndexesLenTimeMinimizerScheduler::new(QueueScheduler::new());
-
+    // let scheduler = QueueScheduler::new();
+    // let scheduler = IndexesLenTimeMinimizerScheduler::new(&edges_observer, QueueScheduler::new());
+    let scheduler = IndexesLenTimeMinimizerScheduler::new(&edges_observer, QueueScheduler::new());
     //
     // Component: Fuzzer
+
     //
+
+    println!("build fuzzer");
 
     // A fuzzer with feedback, objectives, and a corpus scheduler
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
@@ -173,22 +230,34 @@ fn main() -> Result<(), Error> {
     // timeout before each run. This gives us an executor that will execute a bunch of testcases
     // within the same process, eliminating a lot of the overhead associated with a fork/exec or
     // forkserver execution model.
-    let fork_server = ForkserverExecutor::builder()
-        .program("./xpdf/install/bin/pdftotext")
-        .parse_afl_cmdline(["@@"])
-        .coverage_map_size(MAP_SIZE)
-        .build(tuple_list!(time_observer, edges_observer))?;
 
     let timeout = Duration::from_secs(5);
 
+    println!("build forkserver");
+
+    let mut tokens = Tokens::new();
+    let mut fork_server = ForkserverExecutor::builder()
+    .program("./xpdf/install/bin/pdftotext")
+    .parse_afl_cmdline(["@@"])
+    .shmem_provider(&mut shmem_provider)
+    .autotokens(&mut tokens)
+    .coverage_map_size(MAP_SIZE)
+    .timeout(timeout)
+    .build(tuple_list!(time_observer,edges_observer)).unwrap();
+
+
+// ./pdftotext @@
+
     // wrap the fork server executor and its associated timeout limit
-    let mut executor = TimeoutForkserverExecutor::new(fork_server, timeout)?;
+
+    // let _ = state.load_initial_inputs(&mut fuzzer, &mut fork_server, &mut mgr, &corpus_dirs);
+    println!("inport corpus");
 
     // In case the corpus is empty (i.e. on first run), load existing test cases from on-disk
     // corpus
-    if state.corpus().count() < 1 {
+    if state.must_load_initial_inputs() {
         state
-            .load_initial_inputs(&mut fuzzer, &mut executor, &mut mgr, &corpus_dirs)
+            .load_initial_inputs(&mut fuzzer, &mut fork_server, &mut mgr, &corpus_dirs)
             .unwrap_or_else(|err| {
                 panic!(
                     "Failed to load initial corpus at {:?}: {:?}",
@@ -203,7 +272,7 @@ fn main() -> Result<(), Error> {
     //
 
     // Setup a mutational stage with a basic bytes mutator
-    let mutator = StdScheduledMutator::new(havoc_mutations());
+    let mutator = StdScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
 
     //
     // Component: Stage
@@ -211,7 +280,9 @@ fn main() -> Result<(), Error> {
 
     let mut stages = tuple_list!(StdMutationalStage::new(mutator));
 
-    fuzzer.fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)?;
+    fuzzer.fuzz_loop(&mut stages, &mut fork_server, &mut state, &mut mgr)
+        .expect("Error in the fuzzing loop");
 
-    Ok(())
+    // Ok(())
+    ()
 }

@@ -7,5 +7,8 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "3.0.5", features = ["derive"] }
-libafl = { path = "../LibAFL/libafl/" }
-libafl_qemu = { path = "../LibAFL/libafl_qemu/", optional = true }
+# libafl = { path = "../LibAFL/libafl/" }
+# libafl_qemu = { path = "../LibAFL/libafl_qemu/", optional = true }
+
+libafl = "0.11.2"
+libafl_bolts ="0.11.2"

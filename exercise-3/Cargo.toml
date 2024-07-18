@@ -7,7 +7,8 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libafl = { version = "0.10.1" }
-libafl_sugar = { version = "0.10.1" }
-libafl_targets = { version = "0.10.1" }
-clap = { version = "3.2", features = ["derive"] }
+libafl = { version = "0.13.1" }
+libafl_sugar = { version = "0.13.1" }
+libafl_targets = { version = "0.13.1" }
+libafl_qemu = {version = "0.13.1"}
+clap = { version = "4.5.9", features = ["derive"] }

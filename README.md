@@ -11,3 +11,5 @@ in August of 2021. In the repo, he has created exercises and solutions meant to 
 vulnerabilities in real software projects. The repo focuses on [AFL++](https://github.com/AFLplusplus/AFLplusplus) usage, but this repository aims to solve
 the exercises using [LibAFL](https://github.com/AFLplusplus/LibAFL) instead. We'll be exploring the library and writing fuzzers in Rust in order to solve 
 the challenges in a way that closely aligns with the suggested AFL++ usage.
+
+在原up的基础上稍微改了改，毕竟LibAFL更新还挺快的。主要是改到了0.13.1这个版本。

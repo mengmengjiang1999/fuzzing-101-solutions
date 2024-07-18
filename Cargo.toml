@@ -1,13 +1,9 @@
 [workspace]
+
 members = [
-    "exercise-1",
-    "exercise-1.5",
-    "exercise-2",
+    # "exercise-2",
     "exercise-3",
-    "exercise-4",
-    "fuzzer-options"
 ]
-exclude = [ "LibAFL", "AFLTriage" ]
 
 [profile.release]
 lto = true
